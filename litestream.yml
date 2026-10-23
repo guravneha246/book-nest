@@ -1,0 +1,23 @@
+# ==============================================================================
+# BookNest SQLite Litestream Replication Configuration (Cloudflare R2)
+# ==============================================================================
+# Continuously replicates SQLite Write-Ahead Log (WAL) frames to Cloudflare R2
+# to guarantee zero data loss on ephemeral cloud containers (e.g. Render Free).
+#
+# Required Environment Variables (supplied in Cloud Host Dashboard):
+# - R2_ACCOUNT_ID: Cloudflare Account ID
+# - R2_ACCESS_KEY_ID: Cloudflare R2 S3-compatible Access Key ID
+# - R2_SECRET_ACCESS_KEY: Cloudflare R2 S3-compatible Secret Access Key
+# - R2_BUCKET_NAME: Target bucket name (e.g. "booknest-db")
+# ==============================================================================
+
+dbs:
+  - path: ./data/booknest.db
+    replicas:
+      - type: s3
+        bucket: "${R2_BUCKET_NAME}"
+        path: "db"
+        endpoint: "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        access-key-id: "${R2_ACCESS_KEY_ID}"
+        secret-access-key: "${R2_SECRET_ACCESS_KEY}"
+        region: "auto"
