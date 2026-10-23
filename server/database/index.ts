@@ -211,8 +211,11 @@ export function initDatabase() {
   // Seed initial dataset if fresh database
   seedData();
 
-  // Ensure all 19 predefined categories exist
+  // Ensure all predefined categories exist
   ensurePredefinedCategories();
+
+  // Ensure full 300+ book catalogue is populated from seed data across all categories
+  ensureExpandedCatalogueSeed();
 
   // Ensure demo accounts exist with valid credentials even if database already existed
   ensureDemoAccounts();
@@ -343,6 +346,7 @@ export const PREDEFINED_CATEGORIES = [
   { name: 'Thriller', slug: 'thriller', icon: 'fa-solid fa-bolt', color: 'text-orange-600', accent_bg: 'bg-orange-50', description: 'High-stakes suspense & psychological intrigue' },
   { name: 'Fantasy', slug: 'fantasy', icon: 'fa-solid fa-wand-magic-sparkles', color: 'text-purple-600', accent_bg: 'bg-purple-50', description: 'Mythical worlds, magic & epic journeys' },
   { name: 'Education', slug: 'education', icon: 'fa-solid fa-graduation-cap', color: 'text-sky-600', accent_bg: 'bg-sky-50', description: 'Academic textbooks, curricula & pedagogy' },
+  { name: 'Science Fiction', slug: 'science-fiction', icon: 'fa-solid fa-rocket', color: 'text-purple-600', accent_bg: 'bg-purple-50', description: 'Cosmic worldbuilding, speculative futures & space sagas' },
   { name: 'Other', slug: 'other', icon: 'fa-solid fa-shapes', color: 'text-slate-500', accent_bg: 'bg-slate-50', description: 'General collection and eclectic volumes' }
 ];
 
@@ -354,6 +358,138 @@ function ensurePredefinedCategories() {
 
   for (const cat of PREDEFINED_CATEGORIES) {
     insertCat.run(cat.name, cat.slug, cat.icon, cat.color, cat.accent_bg, cat.description);
+  }
+}
+
+export function ensureExpandedCatalogueSeed() {
+  try {
+    const booksCount = (db.prepare('SELECT COUNT(*) as count FROM books').get() as any)?.count || 0;
+    if (booksCount >= 300) {
+      return;
+    }
+
+    const seedPath = path.resolve(process.cwd(), 'data', 'catalogue-seed-data.json');
+    if (!fs.existsSync(seedPath)) {
+      return;
+    }
+
+    const rawCandidates = JSON.parse(fs.readFileSync(seedPath, 'utf8'));
+    if (!Array.isArray(rawCandidates) || rawCandidates.length === 0) {
+      return;
+    }
+
+    // Categories lookup maps
+    const categories = db.prepare('SELECT id, name, slug FROM categories').all() as any[];
+    const categoryBySlug = new Map<string, any>();
+    const categoryByName = new Map<string, any>();
+    for (const cat of categories) {
+      if (cat.slug) categoryBySlug.set(cat.slug.toLowerCase().trim(), cat);
+      if (cat.name) categoryByName.set(cat.name.toLowerCase().trim(), cat);
+    }
+
+    // Existing books index for deduplication
+    const existingBooks = db.prepare(`
+      SELECT b.isbn, b.title, a.name as author_name
+      FROM books b
+      LEFT JOIN authors a ON b.author_id = a.id
+    `).all() as any[];
+
+    const existingIsbns = new Set<string>();
+    const existingTitles = new Set<string>();
+
+    function normalizeIsbn(val: any): string {
+      return String(val || '').replace(/[^0-9X]/gi, '').toUpperCase();
+    }
+
+    function normalizeTitleAuthor(title: any, author: any): string {
+      const cleanTitle = String(title || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cleanAuthor = String(author || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      return `${cleanTitle}::${cleanAuthor}`;
+    }
+
+    for (const b of existingBooks) {
+      if (b.isbn) existingIsbns.add(normalizeIsbn(b.isbn));
+      existingTitles.add(normalizeTitleAuthor(b.title, b.author_name));
+    }
+
+    const insertAuthor = db.prepare('INSERT INTO authors (name, bio) VALUES (?, ?)');
+    const findAuthor = db.prepare('SELECT id FROM authors WHERE name = ?');
+    const insertBook = db.prepare(`
+      INSERT INTO books (
+        title, author_id, category_id, isbn, publisher, publication_year,
+        pages, language, description, price, discount, stock, cover_image,
+        rating, views, is_archived
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `);
+
+    const importTransaction = db.transaction(() => {
+      let imported = 0;
+      for (const candidate of rawCandidates) {
+        if (!candidate.title || !candidate.author || !candidate.isbn) {
+          continue;
+        }
+
+        const cleanIsbn = normalizeIsbn(candidate.isbn);
+        if (cleanIsbn.length !== 10 && cleanIsbn.length !== 13) {
+          continue;
+        }
+
+        const titleKey = normalizeTitleAuthor(candidate.title, candidate.author);
+        if (existingIsbns.has(cleanIsbn) || existingTitles.has(titleKey)) {
+          continue;
+        }
+
+        const slug = String(candidate.categorySlug || '').toLowerCase().trim();
+        const name = String(candidate.category || '').toLowerCase().trim();
+        const matchedCat = categoryBySlug.get(slug) || categoryByName.get(name) || categoryByName.get(slug) || categoryBySlug.get('other') || { id: 1 };
+
+        let author = findAuthor.get(candidate.author.trim()) as any;
+        let authorId: number;
+        if (author) {
+          authorId = author.id;
+        } else {
+          const res = insertAuthor.run(candidate.author.trim(), `Author of ${candidate.title}.`);
+          authorId = Number(res.lastInsertRowid);
+        }
+
+        const price = typeof candidate.price === 'number' && candidate.price > 0 ? candidate.price : 499.0;
+        const discount = typeof candidate.discount === 'number' && candidate.discount >= 0 ? candidate.discount : 10.0;
+        const stock = typeof candidate.stock === 'number' && candidate.stock >= 0 ? candidate.stock : 20;
+        const rating = typeof candidate.rating === 'number' && candidate.rating >= 1 && candidate.rating <= 5 ? candidate.rating : 4.8;
+        const pubYear = candidate.publicationYear ? parseInt(String(candidate.publicationYear), 10) : null;
+        const pages = candidate.pages ? parseInt(String(candidate.pages), 10) : null;
+
+        insertBook.run(
+          candidate.title.trim(),
+          authorId,
+          matchedCat.id,
+          cleanIsbn,
+          candidate.publisher ? candidate.publisher.trim() : null,
+          pubYear,
+          pages,
+          candidate.language || 'English',
+          candidate.description ? candidate.description.trim() : null,
+          price,
+          discount,
+          stock,
+          candidate.coverImage || null,
+          rating,
+          Math.floor(Math.random() * 400) + 100
+        );
+
+        existingIsbns.add(cleanIsbn);
+        existingTitles.add(titleKey);
+        imported++;
+      }
+      return imported;
+    });
+
+    const count = importTransaction();
+    if (count > 0) {
+      console.log(`📚 [Catalogue Expansion] Successfully imported ${count} books from catalogue-seed-data.json across all categories.`);
+    }
+  } catch (err: any) {
+    console.warn('[Catalogue Expansion Error]:', err.message);
   }
 }
 
