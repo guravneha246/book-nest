@@ -60,48 +60,7 @@ router.get('/metrics', (req, res) => {
 });
 
 // Get all orders across the campus
-router.get('/orders', (req, res) => {
-  const orders = db.prepare(`
-    SELECT 
-      o.id,
-      o.order_number as orderNumber,
-      o.user_id as userId,
-      u.name as customerName,
-      u.email as customerEmail,
-      o.full_name as recipientName,
-      o.hostel_block as hostelBlock,
-      o.room_no as roomNo,
-      o.phone,
-      o.grand_total as total,
-      o.status,
-      o.payment_method as payment,
-      o.payment_status as paymentStatus,
-      o.created_at as date,
-      (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as itemsCount
-    FROM orders o
-    JOIN users u ON o.user_id = u.id
-    ORDER BY o.created_at DESC
-  `).all() as any[];
-
-  // Format date and room for admin table view
-  const formattedOrders = orders.map(o => ({
-    id: o.id,
-    customerName: o.recipientName || o.customerName,
-    room: `${o.hostelBlock}, ${o.roomNo}`,
-    total: o.total,
-    status: o.status,
-    date: new Date(o.date).toLocaleDateString('en-IN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }),
-    itemsCount: o.itemsCount,
-    payment: o.payment
-  }));
-
-  res.json({ orders: formattedOrders });
-});
+router.get('/orders', ordersController.getAdminOrders);
 
 router.patch('/orders/:id/status', ordersController.updateOrderStatus);
 router.put('/orders/:id/status', ordersController.updateOrderStatus);

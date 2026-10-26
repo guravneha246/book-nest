@@ -11,6 +11,19 @@ export function getAllowedOrigins(): string[] {
     } catch {}
   }
 
+  // Render deployment environment URLs
+  if (process.env.RENDER_EXTERNAL_URL) {
+    try {
+      allowed.add(new URL(process.env.RENDER_EXTERNAL_URL).origin.toLowerCase());
+    } catch {}
+  }
+  if (process.env.RENDER_EXTERNAL_HOSTNAME) {
+    allowed.add(`https://${process.env.RENDER_EXTERNAL_HOSTNAME.toLowerCase()}`);
+  }
+
+  // Live production service default
+  allowed.add('https://booknest-api-tnwu.onrender.com');
+
   // Local development / testing origins
   allowed.add('http://localhost:3000');
   allowed.add('http://127.0.0.1:3000');
@@ -45,7 +58,7 @@ export const corsOptions: CorsOptions = {
     const normalizedOrigin = origin.toLowerCase();
     const allowedOrigins = getAllowedOrigins();
 
-    if (allowedOrigins.includes(normalizedOrigin)) {
+    if (allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.endsWith('.onrender.com')) {
       return callback(null, true);
     }
 

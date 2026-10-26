@@ -34,6 +34,11 @@ export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
+  // Allow browser CORS preflight requests to pass through without credentials
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });

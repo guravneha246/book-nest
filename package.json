@@ -17,6 +17,7 @@
     "test:ui": "node scripts/audit-browser.mjs",
     "test:persistence": "tsx scripts/test-persistence.mjs",
     "test:scanner": "tsx scripts/test-scanner.mjs",
+    "test:payments": "tsx scripts/test-payment-timestamps.mjs",
     "test:e2e": "tsx scripts/verify-all-fixes.mjs"
   },
   "dependencies": {

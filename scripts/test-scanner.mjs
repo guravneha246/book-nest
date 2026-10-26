@@ -62,13 +62,13 @@ async function runScannerTestSuite() {
       if (cleanIsbn === '9780000000009') {
         throw new Error('Simulated OpenLibrary external timeout (4000ms)');
       }
-      // 2. Controlled external catalog match (Crime and Punishment)
-      if (cleanIsbn === '9780140449136') {
+      // 2. Controlled external catalog match (Crime and Punishment - External Edition)
+      if (cleanIsbn === '9780140449999') {
         return {
           id: -1,
           title: 'Crime and Punishment',
           author: 'Fyodor Dostoyevsky',
-          isbn: '9780140449136',
+          isbn: '9780140449999',
           category: 'Classic Literature',
           categorySlug: 'classics',
           publisher: 'Penguin Classics',
@@ -254,12 +254,12 @@ async function runScannerTestSuite() {
     assert(false, `Test 9 threw error: ${err.message}`);
   }
 
-  console.log('\n--- Test 10: OpenLibrary External ISBN (9780140449136 - Crime and Punishment) ---');
+  console.log('\n--- Test 10: OpenLibrary External ISBN (9780140449999 - Crime and Punishment) ---');
   try {
     const res = await fetch(`${API_URL}/scanner/isbn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isbn: '9780140449136' })
+      body: JSON.stringify({ isbn: '9780140449999' })
     });
     const data = await res.json();
     assert(res.ok && data.matched === true, 'Matched external book via deterministic OpenLibrary mock');

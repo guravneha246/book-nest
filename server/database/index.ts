@@ -112,6 +112,8 @@ export function initDatabase() {
       hostel_block TEXT NOT NULL,
       room_no TEXT NOT NULL,
       delivery_notes TEXT,
+      paid_at DATETIME,
+      cancelled_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -176,6 +178,19 @@ export function initDatabase() {
       is_active INTEGER NOT NULL DEFAULT 1
     );
 
+    -- 15. Payments (Demo Ledger)
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'INR',
+      method TEXT NOT NULL,
+      status TEXT NOT NULL,
+      transaction_id TEXT UNIQUE,
+      paid_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Indexes for high-throughput reads and lookups
     CREATE INDEX IF NOT EXISTS idx_books_isbn ON books(isbn);
     CREATE INDEX IF NOT EXISTS idx_books_category ON books(category_id);
@@ -206,6 +221,35 @@ export function initDatabase() {
   } catch {}
   try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_books_archived ON books(is_archived);');
+  } catch {}
+
+  // Safe non-destructive migrations for orders payment timestamps and payments ledger
+  try {
+    db.exec('ALTER TABLE orders ADD COLUMN paid_at DATETIME;');
+  } catch {}
+  try {
+    db.exec('ALTER TABLE orders ADD COLUMN cancelled_at DATETIME;');
+  } catch {}
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_orders_paid_at ON orders(paid_at);');
+  } catch {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        method TEXT NOT NULL,
+        status TEXT NOT NULL,
+        transaction_id TEXT UNIQUE,
+        paid_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch {}
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);');
   } catch {}
 
   // Seed initial dataset if fresh database

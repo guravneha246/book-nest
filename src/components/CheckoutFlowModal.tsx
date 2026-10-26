@@ -18,6 +18,7 @@ interface CheckoutFlowModalProps {
   books: Book[];
   summary: CartSummaryData;
   onOrderSuccess: (orderId: number, details: any) => void;
+  onViewOrders?: () => void;
   currentUser?: any;
   onOpenAuth?: () => void;
 }
@@ -29,6 +30,7 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
   books,
   summary,
   onOrderSuccess,
+  onViewOrders,
   currentUser,
   onOpenAuth,
 }) => {
@@ -65,14 +67,51 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
     })
     .filter(item => item.book !== undefined) as { id: number; book: Book; quantity: number }[];
 
+  const validateAddress = (): boolean => {
+    if (!address.fullName || address.fullName.trim().length < 2) {
+      setErrorMessage('Please enter student recipient full name.');
+      return false;
+    }
+    const cleanPhone = address.phone ? address.phone.replace(/\D/g, '') : '';
+    if (cleanPhone.length < 10) {
+      setErrorMessage('Please enter a valid 10-digit campus contact number.');
+      return false;
+    }
+    if (!address.hostelBlock || address.hostelBlock.trim().length < 2) {
+      setErrorMessage('Please enter your hostel residence hall or block.');
+      return false;
+    }
+    if (!address.roomNo || address.roomNo.trim().length < 1) {
+      setErrorMessage('Please enter your room or wing number.');
+      return false;
+    }
+    setErrorMessage(null);
+    return true;
+  };
+
+  const handleStep1Proceed = () => {
+    if (validateAddress()) {
+      setStep(2);
+    }
+  };
+
   const handlePlaceOrder = async () => {
     if (!currentUser) {
       if (onOpenAuth) onOpenAuth();
       return;
     }
 
+    if (!validateAddress()) {
+      setStep(1);
+      return;
+    }
+
     setIsProcessing(true);
     setErrorMessage(null);
+
+    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : `order-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     try {
       const response = await api.placeOrder({
@@ -80,7 +119,7 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
         paymentMethod: paymentMethod.toUpperCase(),
         items: cartItems.map(item => ({ bookId: item.book.id, quantity: item.quantity })),
         summary
-      });
+      }, idempotencyKey);
 
       setCompletedOrder(response.order);
       onOrderSuccess(response.order.id, response.order);
@@ -125,7 +164,10 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={() => {
+              onClose();
+              if (completedOrder && onViewOrders) onViewOrders();
+            }}
             aria-label="Close checkout modal"
             className="w-9 h-9 rounded-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
@@ -172,9 +214,19 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
                 </div>
                 <div className="text-right">
                   <div className="font-mono font-bold text-sm text-slate-900">#BN-{completedOrder.orderNumber || completedOrder.id}</div>
-                  <div className="text-slate-500 text-[11px]">{completedOrder.date}</div>
-                  <span className="inline-block mt-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold text-[10px]">
-                    PAID ({completedOrder.paymentMethod.toUpperCase()})
+                  <div className="text-slate-500 text-[11px]">
+                    {completedOrder.paidAt
+                      ? new Date(completedOrder.paidAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
+                      : (completedOrder.date || 'Pending Confirmation')}
+                  </div>
+                  <span className={`inline-block mt-1 px-2 py-0.5 rounded font-semibold text-[10px] ${
+                    completedOrder.paymentStatus === 'DEMO PAID' || (completedOrder.paymentMethod && completedOrder.paymentMethod.toUpperCase() !== 'COD')
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-900'
+                  }`}>
+                    {completedOrder.paymentStatus === 'DEMO PAID' || (completedOrder.paymentMethod && completedOrder.paymentMethod.toUpperCase() !== 'COD')
+                      ? `DEMO PAID (${(completedOrder.paymentMethod || 'DEMO').toUpperCase()})`
+                      : 'CASH ON DELIVERY (PENDING)'}
                   </span>
                 </div>
               </div>
@@ -229,7 +281,10 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
               </button>
 
               <button
-                onClick={onClose}
+                onClick={() => {
+                  onClose();
+                  if (onViewOrders) onViewOrders();
+                }}
                 className="flex-1 py-3 rounded-2xl bg-slate-900 hover:bg-amber-600 text-amber-50 hover:text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all"
               >
                 <span>View All Orders</span>
@@ -347,7 +402,7 @@ export const CheckoutFlowModal: React.FC<CheckoutFlowModalProps> = ({
 
                 <div className="pt-4 flex justify-end">
                   <button
-                    onClick={() => setStep(2)}
+                    onClick={handleStep1Proceed}
                     className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-amber-600 text-amber-50 hover:text-slate-950 font-bold text-xs flex items-center gap-2 shadow-md transition-all"
                   >
                     <span>Proceed to Order Review</span>

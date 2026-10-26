@@ -31,6 +31,7 @@ if (config.trustProxy) {
 // Security Headers and CORS Policy
 app.use(securityHeaders);
 app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 
 // Health Check
 app.get('/api/health', (req, res) => {

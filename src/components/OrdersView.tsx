@@ -138,6 +138,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 <div>
                   <span className="text-zinc-400 block font-medium">ORDER PLACED</span>
                   <span className="font-semibold text-zinc-900">{order.date}</span>
+                  {(order as any).paidAt && (
+                    <span className="text-[10px] text-emerald-700 block font-medium">
+                      Paid: {new Date((order as any).paidAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short" })}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <span className="text-zinc-400 block font-medium">TOTAL AMOUNT</span>
@@ -348,6 +353,9 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) => {
             <span className="text-zinc-400 block font-medium">Invoice Details:</span>
             <div className="mt-1 space-y-1">
               <div><strong>Invoice Date:</strong> {order.date}</div>
+              {(order as any).paidAt && (
+                <div><strong>Payment Confirmed (IST):</strong> {new Date((order as any).paidAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}</div>
+              )}
               <div><strong>Payment Mode:</strong> {order.paymentMethod}</div>
               <div><strong>Delivery Mode:</strong> Regional Express Campus Dispatch</div>
               <div><strong>GST Compliance:</strong> 07AAAAA0000A1Z5</div>

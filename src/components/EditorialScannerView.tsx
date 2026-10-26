@@ -130,6 +130,7 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const barcodeScanIntervalRef = useRef<any>(null);
+  const isScanningRef = useRef<boolean>(false);
 
   // BUG 1: Synchronized ref to prevent stale React closures inside barcode intervals
   const scannerStateRef = useRef<ScannerState>('idle');
@@ -171,6 +172,14 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
     setDetectedMetadata(null);
     setScannerMode('camera');
     setScannerState('camera-starting');
+
+    // HTTPS / Secure context check for production browser camera access
+    if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      const msg = 'Camera access requires a secure HTTPS connection. Please ensure BookNest is running over HTTPS, or upload a book photo below.';
+      setCameraError(msg);
+      setScannerState('camera-unavailable');
+      return;
+    }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       const msg = 'Camera access is not supported by your current browser. Please upload an image instead.';
@@ -257,6 +266,7 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
           try {
             const barcodes = await barcodeDetector.detect(videoRef.current);
             if (barcodes.length > 0 && barcodes[0].rawValue) {
+              if (isScanningRef.current) return;
               const detectedCode = barcodes[0].rawValue;
               stopCameraStream();
               processDetectedBarcode(detectedCode, 'REAL CAMERA');
@@ -362,7 +372,8 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
   // 3. EXECUTE RECOGNITION PIPELINE ON PREVIEW IMAGE
   // Implements full fallback order (BUG 2, BUG 3, BUG 4, BUG 8, BUG 9)
   const processImageRecognition = async () => {
-    if (!previewImage) return;
+    if (!previewImage || isScanningRef.current) return;
+    isScanningRef.current = true;
 
     setScannerState('processing');
     setGeneralError(null);
@@ -370,87 +381,95 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
     setCandidates([]);
     setDetectedMetadata(null);
 
-    // Step A: Attempt client-side BarcodeDetector on image if supported
-    let detectedBarcode: string | null = null;
-    if ('BarcodeDetector' in window) {
-      try {
-        const img = new Image();
-        img.src = previewImage;
-        await img.decode();
-        const barcodeDetector = new (window as any).BarcodeDetector({
-          formats: ['ean_13', 'ean_8', 'upc_a', 'code_128', 'qr_code'],
-        });
-        const barcodes = await barcodeDetector.detect(img);
-        if (barcodes.length > 0 && barcodes[0].rawValue) {
-          detectedBarcode = barcodes[0].rawValue;
-        }
-      } catch {
-        // Fallback to OCR pipeline
-      }
-    }
-
-    if (detectedBarcode) {
-      await processDetectedBarcode(detectedBarcode, scannerMode === 'camera' ? 'REAL CAMERA' : 'REAL IMAGE UPLOAD');
-      return;
-    }
-
-    // Step B: Send to Backend OCR & Deterministic Matching Pipeline
-    setScannerState('ocr-processing');
     try {
-      const res = await api.scanVision(previewImage, previewMimeType);
-
-      setDetectedMetadata(res.detectedMetadata || null);
-
-      // Handle Gemini configuration error (BUG 4)
-      if (res.matchType === 'VISION_CONFIGURATION_ERROR') {
-        setGeneralError(res.error || 'Gemini Vision is not configured on the backend.');
-        setScannerState('vision-unconfigured');
-        return;
-      }
-
-      // Handle no book in image (BUG 9 State 5)
-      if (res.matchType === 'NO_BOOK_DETECTED') {
-        setGeneralError(res.error || 'The image does not appear to contain a book cover or barcode.');
-        setScannerState('no-book-detected');
-        return;
-      }
-
-      // Handle blurry / unclear text (BUG 9 State 4)
-      if (res.matchType === 'TEXT_UNCLEAR') {
-        setGeneralError(res.error || 'Book cover detected, but printed text is too blurry to read.');
-        setScannerState('text-unclear');
-        return;
-      }
-
-      // Handle single confident match (Local or External)
-      if (res.matched && res.book) {
-        setMatchedBook(res.book);
-        setMatchType(res.matchType);
-        setCalculatedConfidence(res.confidence);
-        setMatchEvidence(res.evidence || '');
-        setCandidates(res.candidates || []);
-        if (res.isLocalCatalog === false || res.book.stock === 0) {
-          setScannerState('not-stocked');
-        } else {
-          setScannerState('matched');
+      // Step A: Attempt client-side BarcodeDetector on image if supported
+      let detectedBarcode: string | null = null;
+      if ('BarcodeDetector' in window) {
+        try {
+          const img = new Image();
+          img.src = previewImage;
+          await img.decode();
+          const barcodeDetector = new (window as any).BarcodeDetector({
+            formats: ['ean_13', 'ean_8', 'upc_a', 'code_128', 'qr_code'],
+          });
+          const barcodes = await barcodeDetector.detect(img);
+          if (barcodes.length > 0 && barcodes[0].rawValue) {
+            detectedBarcode = barcodes[0].rawValue;
+          }
+        } catch {
+          // Fallback to OCR pipeline
         }
-      } else if (res.candidates && res.candidates.length > 0) {
-        setCandidates(res.candidates);
-        setCalculatedConfidence(res.confidence);
-        setMatchEvidence(res.evidence || '');
-        setScannerState('multiple-matches');
-      } else {
-        setGeneralError(res.error || 'No catalog titles or external records matched the extracted text.');
-        setScannerState('no-match');
       }
-    } catch (err: any) {
-      setGeneralError(err.message || 'Optical machine vision analysis failed.');
-      setScannerState('error');
+
+      if (detectedBarcode) {
+        isScanningRef.current = false;
+        await processDetectedBarcode(detectedBarcode, scannerMode === 'camera' ? 'REAL CAMERA' : 'REAL IMAGE UPLOAD');
+        return;
+      }
+
+      // Step B: Send to Backend OCR & Deterministic Matching Pipeline
+      setScannerState('ocr-processing');
+      try {
+        const res = await api.scanVision(previewImage, previewMimeType);
+
+        setDetectedMetadata(res.detectedMetadata || null);
+
+        // Handle Gemini configuration error (BUG 4)
+        if (res.matchType === 'VISION_CONFIGURATION_ERROR') {
+          setGeneralError(res.error || 'Gemini Vision is not configured on the backend.');
+          setScannerState('vision-unconfigured');
+          return;
+        }
+
+        // Handle no book in image (BUG 9 State 5)
+        if (res.matchType === 'NO_BOOK_DETECTED') {
+          setGeneralError(res.error || 'The image does not appear to contain a book cover or barcode.');
+          setScannerState('no-book-detected');
+          return;
+        }
+
+        // Handle blurry / unclear text (BUG 9 State 4)
+        if (res.matchType === 'TEXT_UNCLEAR') {
+          setGeneralError(res.error || 'Book cover detected, but printed text is too blurry to read.');
+          setScannerState('text-unclear');
+          return;
+        }
+
+        // Handle single confident match (Local or External)
+        if (res.matched && res.book) {
+          setMatchedBook(res.book);
+          setMatchType(res.matchType);
+          setCalculatedConfidence(res.confidence);
+          setMatchEvidence(res.evidence || '');
+          setCandidates(res.candidates || []);
+          if (res.isLocalCatalog === false || res.book.stock === 0) {
+            setScannerState('not-stocked');
+          } else {
+            setScannerState('matched');
+          }
+        } else if (res.candidates && res.candidates.length > 0) {
+          setCandidates(res.candidates);
+          setCalculatedConfidence(res.confidence);
+          setMatchEvidence(res.evidence || '');
+          setScannerState('multiple-matches');
+        } else {
+          setGeneralError(res.error || 'No catalog titles or external records matched the extracted text.');
+          setScannerState('no-match');
+        }
+      } catch (err: any) {
+        setGeneralError(err.message || 'Optical machine vision analysis failed.');
+        setScannerState('error');
+      }
+    } finally {
+      isScanningRef.current = false;
     }
   };
 
   // Process detected barcode string
   const processDetectedBarcode = async (rawCode: string, source: 'REAL CAMERA' | 'REAL IMAGE UPLOAD') => {
+    if (isScanningRef.current) return;
+    isScanningRef.current = true;
+
     setScannerState('isbn-detected');
     setGeneralError(null);
 
@@ -478,6 +497,8 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
     } catch (err: any) {
       setGeneralError(err.message || `No book found in catalog for barcode: ${rawCode}`);
       setScannerState('no-match');
+    } finally {
+      isScanningRef.current = false;
     }
   };
 
@@ -768,7 +789,10 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
               ref={videoRef}
               playsInline
               muted
-              className={`w-full h-full object-cover ${scannerState === 'camera-ready' ? 'block' : 'hidden'}`}
+              autoPlay
+              className={`w-full h-full object-cover transition-opacity duration-200 ${
+                scannerState === 'camera-ready' ? 'opacity-100' : 'opacity-0 pointer-events-none absolute inset-0'
+              }`}
             />
 
             {/* Captured / Uploaded Image Preview */}
@@ -840,6 +864,27 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
             )}
 
           </div>
+
+          {/* Prominent Viewfinder Action Controls when Camera is Active */}
+          {scannerState === 'camera-ready' && (
+            <div className="mt-4 flex items-center justify-center gap-3 animate-in fade-in duration-200">
+              <button
+                type="button"
+                onClick={captureFrame}
+                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
+              >
+                <i className="fa-solid fa-camera text-base"></i>
+                <span>Capture Frame & Scan Book</span>
+              </button>
+              <button
+                type="button"
+                onClick={stopCamera}
+                className="px-4 py-3 rounded-2xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {/* Captured Preview Action Bar ("Use This Image" vs "Retake") */}
           {scannerState === 'captured' && previewImage && (

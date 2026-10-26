@@ -19,6 +19,33 @@ function ensureIdempotencyTable() {
   `);
 }
 
+export function formatOrderDate(dateVal: string | Date | null | undefined): string {
+  if (!dateVal) return '';
+  let d: Date;
+  if (typeof dateVal === 'string') {
+    let normalized = dateVal.trim();
+    if (!normalized.includes('T') && normalized.includes(' ')) {
+      normalized = normalized.replace(' ', 'T') + 'Z';
+    } else if (normalized.includes('T') && !normalized.endsWith('Z') && !normalized.includes('+')) {
+      normalized = normalized + 'Z';
+    }
+    d = new Date(normalized);
+  } else {
+    d = dateVal;
+  }
+  if (isNaN(d.getTime())) return String(dateVal);
+
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
 export const ordersController = {
   // GET /api/orders
   getOrders: (req: AuthRequest, res: Response) => {
@@ -41,7 +68,9 @@ export const ordersController = {
         o.hostel_block as hostelBlock,
         o.room_no as roomNo,
         o.delivery_notes as deliveryNotes,
-        o.created_at as date
+        o.paid_at as paidAt,
+        o.cancelled_at as cancelledAt,
+        o.created_at as createdAt
       FROM orders o
       WHERE o.user_id = ?
       ORDER BY o.created_at DESC
@@ -69,13 +98,10 @@ export const ordersController = {
       return {
         id: order.id,
         orderNumber: order.orderNumber,
-        date: new Date(order.date).toLocaleDateString('en-IN', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
+        date: formatOrderDate(order.paidAt || order.createdAt),
+        paidAt: order.paidAt || null,
+        createdAt: order.createdAt,
+        cancelledAt: order.cancelledAt || null,
         total: order.total,
         status: order.status,
         paymentMethod: order.paymentMethod,
@@ -145,13 +171,10 @@ export const ordersController = {
       order: {
         id: order.id,
         orderNumber: order.order_number,
-        date: new Date(order.created_at).toLocaleDateString('en-IN', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
+        date: formatOrderDate(order.paid_at || order.created_at),
+        paidAt: order.paid_at || null,
+        createdAt: order.created_at,
+        cancelledAt: order.cancelled_at || null,
         status: order.status,
         paymentMethod: order.payment_method,
         paymentStatus: order.payment_status,
@@ -379,17 +402,26 @@ export const ordersController = {
           }
         }
 
-        // 8. Insert order record
+        // Authoritative server timestamp & payment status calculation
+        const nowUtc = new Date().toISOString();
+        const methodUpper = String(paymentMethod).toUpperCase();
+        const isDemoPaid = methodUpper === 'UPI' || methodUpper === 'CARD';
+        const paymentStatus = isDemoPaid ? 'DEMO PAID' : 'PENDING (COD)';
+        const paidAt = isDemoPaid ? nowUtc : null;
+
+        // 8. Insert order record with server clock timestamps
         const orderInsertResult = db.prepare(`
           INSERT INTO orders (
             user_id, order_number, status, payment_method, payment_status,
             subtotal, discount_amount, delivery_fee, gst_amount, grand_total,
-            full_name, phone, hostel_block, room_no, delivery_notes
-          ) VALUES (?, ?, 'Confirmed', ?, 'DEMO PAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            full_name, phone, hostel_block, room_no, delivery_notes,
+            paid_at, created_at
+          ) VALUES (?, ?, 'Confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           userId,
           orderNumber,
-          paymentMethod.toUpperCase(),
+          methodUpper,
+          paymentStatus,
           serverSubtotal,
           serverCouponDiscount,
           serverDeliveryFee,
@@ -399,10 +431,32 @@ export const ordersController = {
           address.phone,
           address.hostelBlock,
           address.roomNo,
-          address.deliveryNotes || ''
+          address.deliveryNotes || '',
+          paidAt,
+          nowUtc
         );
 
         const newOrderId = Number(orderInsertResult.lastInsertRowid);
+
+        // Record demo payment ledger entry
+        try {
+          const demoTxnId = `DEMO_TXN_${orderNumber}_${Date.now()}`;
+          db.prepare(`
+            INSERT INTO payments (
+              order_id, amount, currency, method, status, transaction_id, paid_at, created_at
+            ) VALUES (?, ?, 'INR', ?, ?, ?, ?, ?)
+          `).run(
+            newOrderId,
+            serverGrandTotal,
+            methodUpper,
+            paymentStatus,
+            demoTxnId,
+            paidAt,
+            nowUtc
+          );
+        } catch (payErr) {
+          console.warn('Non-critical payments ledger insert warning:', payErr);
+        }
 
         // 9. Insert order items
         const insertItemStmt = db.prepare(`
@@ -445,13 +499,9 @@ export const ordersController = {
         order: {
           id: createdOrder.id,
           orderNumber: createdOrder.order_number,
-          date: new Date().toLocaleDateString('en-IN', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
+          date: formatOrderDate(createdOrder.paid_at || createdOrder.created_at),
+          paidAt: createdOrder.paid_at || null,
+          createdAt: createdOrder.created_at,
           total: createdOrder.grand_total,
           summary: {
             subtotal: createdOrder.subtotal,
@@ -522,8 +572,9 @@ export const ordersController = {
         o.status,
         o.payment_method as payment,
         o.payment_status as paymentStatus,
-        o.created_at as date,
-        (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as itemsCount
+        o.paid_at as paidAt,
+        o.cancelled_at as cancelledAt,
+        o.created_at as createdAt
       FROM orders o
       JOIN users u ON o.user_id = u.id
       ORDER BY o.created_at DESC
@@ -535,14 +586,13 @@ export const ordersController = {
       room: `${o.hostelBlock}, ${o.roomNo}`,
       total: o.total,
       status: o.status,
-      date: new Date(o.date).toLocaleDateString('en-IN', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
+      date: formatOrderDate(o.paidAt || o.createdAt),
+      paidAt: o.paidAt || null,
+      createdAt: o.createdAt,
+      cancelledAt: o.cancelledAt || null,
       itemsCount: o.itemsCount,
-      payment: o.payment
+      payment: o.payment,
+      paymentStatus: o.paymentStatus
     }));
 
     res.json({ orders: formattedOrders });
@@ -599,8 +649,13 @@ export const ordersController = {
           }
         }
 
-        // Update order status
-        db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
+        // Update order status and set cancelled_at if cancelled
+        if (status === 'Cancelled') {
+          const cancelledAt = new Date().toISOString();
+          db.prepare('UPDATE orders SET status = ?, cancelled_at = COALESCE(cancelled_at, ?) WHERE id = ?').run(status, cancelledAt, id);
+        } else {
+          db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
+        }
 
         return {
           success: true,
@@ -680,8 +735,9 @@ export const ordersController = {
           restoreStockStmt.run(item.quantity, item.book_id);
         }
 
-        // Atomically update order status to Cancelled
-        db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('Cancelled', order.id);
+        const cancelledAt = new Date().toISOString();
+        // Atomically update order status to Cancelled and record cancellation timestamp
+        db.prepare('UPDATE orders SET status = ?, cancelled_at = ? WHERE id = ?').run('Cancelled', cancelledAt, order.id);
 
         return {
           success: true,

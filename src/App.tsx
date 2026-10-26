@@ -792,9 +792,11 @@ export default function App() {
         onOrderSuccess={(orderId, details) => {
           setPlacedOrders(prev => [details, ...prev]);
           clearCart();
+          showToast(`Order #${details?.orderNumber || orderId} confirmed! Sent to hostel warehouse.`, 'success');
+        }}
+        onViewOrders={() => {
           setIsCheckoutOpen(false);
           setActiveView('orders');
-          showToast(`Order #${details?.orderNumber || orderId} confirmed! Sent to hostel warehouse.`, 'success');
         }}
         onOpenAuth={() => setIsAuthOpen(true)}
       />
