@@ -2,6 +2,25 @@ import { request, ApiError } from './client';
 import { Book } from '../../types';
 
 export const scannerApi = {
+  getStatus: async () => {
+    try {
+      return await request<{
+        success: boolean;
+        visionConfigured: boolean;
+        barcodeSupported: boolean;
+        isbnLookupSupported: boolean;
+        catalogCount?: number;
+      }>('/api/scanner/status');
+    } catch {
+      return {
+        success: true,
+        visionConfigured: false,
+        barcodeSupported: true,
+        isbnLookupSupported: true,
+      };
+    }
+  },
+
   scanIsbn: async (isbn: string) => {
     try {
       return await request<{

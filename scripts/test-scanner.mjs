@@ -14,7 +14,7 @@ const { closeDatabase } = await import('../server/database/index.js');
 const { setExternalLookupProvider } = await import('../server/routes/scanner.js');
 
 const TEST_PORT = 5057;
-const BASE_URL = 'http://localhost:3000';
+const BASE_URL = process.env.BASE_URL || (fs.existsSync('dist/index.html') ? `http://localhost:${TEST_PORT}` : 'http://localhost:3000');
 const API_URL = `http://localhost:${TEST_PORT}/api`;
 let server;
 
@@ -112,7 +112,19 @@ async function runScannerTestSuite() {
 
   // --- SUITE A: DETERMINISTIC ISBN & CATALOG MATCHING ---
 
-  console.log('--- Test 1: Known ISBN (Clean Code: 9780132350884) ---');
+  console.log('--- Test 0: Scanner Configuration Status (/api/scanner/status) ---');
+  try {
+    const res = await fetch(`${API_URL}/scanner/status`);
+    const data = await res.json();
+    assert(res.ok && data.success === true, 'Returned 200 OK and success === true');
+    assert(typeof data.visionConfigured === 'boolean', `visionConfigured is a boolean flag (Got: ${data.visionConfigured})`);
+    assert(data.barcodeSupported === true, 'barcodeSupported is true');
+    assert(data.isbnLookupSupported === true, 'isbnLookupSupported is true');
+  } catch (err) {
+    assert(false, `Test 0 threw error: ${err.message}`);
+  }
+
+  console.log('\n--- Test 1: Known ISBN (Clean Code: 9780132350884) ---');
   try {
     const res = await fetch(`${API_URL}/scanner/isbn`, {
       method: 'POST',

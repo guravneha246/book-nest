@@ -146,6 +146,21 @@ async function searchOpenLibraryByTitleAuthor(title: string, author?: string): P
 }
 
 /**
+ * 0. Scanner Configuration Status
+ * Returns whether AI Gemini optical vision is configured, plus general scanner capabilities.
+ * Safe and non-sensitive: never returns or leaks the API key.
+ */
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    visionConfigured: isGeminiConfigured(),
+    barcodeSupported: true,
+    isbnLookupSupported: true,
+    catalogCount: getFullCatalog().length
+  });
+});
+
+/**
  * 1. Direct ISBN / Barcode Lookup
  * Supports ISBN-10, ISBN-13, EAN-13. Normalizes spaces & hyphens.
  * Searches local BookNest catalog first, falls back to OpenLibrary API if not in local warehouse.

@@ -73,6 +73,7 @@ export const api = {
   getAiRecommendations: recommendationsApi.getAiRecommendations,
 
   // Scanner
+  getScannerStatus: scannerApi.getStatus,
   scanIsbn: scannerApi.scanIsbn,
   scanVision: scannerApi.scanVision,
   matchText: scannerApi.matchText,

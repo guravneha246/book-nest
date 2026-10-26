@@ -2,16 +2,20 @@ import { GoogleGenAI } from '@google/genai';
 import { config } from '../config/index.js';
 
 export function isGeminiConfigured(): boolean {
-  const key = process.env.GEMINI_API_KEY || config.geminiApiKey;
-  return Boolean(key && key.trim() && key !== 'MY_GEMINI_API_KEY');
+  const rawKey = process.env.GEMINI_API_KEY || config.geminiApiKey;
+  if (!rawKey) return false;
+  const key = rawKey.trim().replace(/^["']|["']$/g, '');
+  return Boolean(key && key !== 'MY_GEMINI_API_KEY');
 }
 
 export function getGeminiClient(): GoogleGenAI | null {
-  const key = process.env.GEMINI_API_KEY || config.geminiApiKey;
-  if (!key || !key.trim() || key === 'MY_GEMINI_API_KEY') {
+  const rawKey = process.env.GEMINI_API_KEY || config.geminiApiKey;
+  if (!rawKey) return null;
+  const key = rawKey.trim().replace(/^["']|["']$/g, '');
+  if (!key || key === 'MY_GEMINI_API_KEY') {
     return null;
   }
-  return new GoogleGenAI({ apiKey: key.trim() });
+  return new GoogleGenAI({ apiKey: key });
 }
 
 // Retain exported instance for backward compatibility

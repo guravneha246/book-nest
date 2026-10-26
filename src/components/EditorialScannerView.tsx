@@ -64,6 +64,19 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
 
   // Manual search query state
   const [manualQuery, setManualQuery] = useState('');
+  const [isVisionConfigured, setIsVisionConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (api.getScannerStatus) {
+      api.getScannerStatus()
+        .then((res: any) => {
+          setIsVisionConfigured(Boolean(res?.visionConfigured));
+        })
+        .catch(() => {
+          setIsVisionConfigured(false);
+        });
+    }
+  }, []);
 
   const fallbackSamples: Book[] = [
     {
@@ -503,9 +516,9 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
   };
 
   // 4. MANUAL ISBN / TITLE SEARCH
-  const handleManualSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualQuery.trim()) return;
+  const executeSearch = async (queryToSearch: string) => {
+    const rawClean = queryToSearch.trim();
+    if (!rawClean) return;
 
     stopCameraStream();
     setScannerMode('manual');
@@ -515,7 +528,8 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
     setCandidates([]);
     setDetectedMetadata(null);
 
-    const clean = manualQuery.trim();
+    // Normalize ISBN prefix if present (e.g. "ISBN 978-0-13-235088-4" -> "978-0-13-235088-4")
+    const clean = rawClean.replace(/^(?:ISBN(?:-1[03])?:?\s*)/i, '').trim();
     const isDigits = /^[0-9X-]+$/i.test(clean);
 
     try {
@@ -537,7 +551,7 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
           setScannerState('no-match');
         }
       } else {
-        const res = await api.matchText(clean);
+        const res = await api.matchText(rawClean);
         if (res.matched && res.book) {
           setMatchedBook(res.book);
           setMatchType(res.matchType);
@@ -555,14 +569,19 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
           setMatchEvidence(res.evidence);
           setScannerState('multiple-matches');
         } else {
-          setGeneralError(res.error || `No titles matching "${clean}" found.`);
+          setGeneralError(res.error || `No titles matching "${rawClean}" found.`);
           setScannerState('no-match');
         }
       }
     } catch (err: any) {
-      setGeneralError(err.message || `Search failed for "${clean}".`);
+      setGeneralError(err.message || `Search failed for "${rawClean}".`);
       setScannerState('no-match');
     }
+  };
+
+  const handleManualSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSearch(manualQuery);
   };
 
   // 5. DEMO SAMPLE MODE (Explicitly labelled DEMO)
@@ -676,6 +695,19 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
         {/* Left Column: Viewfinder & Controls Frame */}
         <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-8 shadow-xl">
           
+          {/* Non-blocking informational banner if Gemini Vision OCR is not configured */}
+          {isVisionConfigured === false && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-amber-50/90 border border-amber-200 text-xs text-amber-950 flex items-start gap-2.5 animate-in fade-in duration-200">
+              <i className="fa-solid fa-circle-info text-amber-600 mt-0.5 text-sm shrink-0"></i>
+              <div className="flex-1 leading-relaxed">
+                <span className="font-bold text-amber-900">AI Cover Recognition Offline:</span>{' '}
+                <span className="text-amber-800">
+                  Optical cover OCR requires <code className="px-1 py-0.5 bg-amber-100/80 rounded font-mono text-[11px] text-amber-900">GEMINI_API_KEY</code> on Render. For camera scanning, point your camera at the <strong>ISBN barcode on the back cover</strong>, or use the <strong>manual search bar</strong> below.
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Top HUD Controls */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100 text-xs">
             
@@ -1387,39 +1419,91 @@ export const EditorialScannerView: React.FC<EditorialScannerViewProps> = ({
             </div>
           )}
 
-          {/* ================= STATE 6: VISION SERVICE NOT CONFIGURED ================= */}
+          {/* ================= STATE 6: VISION SERVICE NOT CONFIGURED (GRACEFUL FALLBACK) ================= */}
           {scannerState === 'vision-unconfigured' && (
-            <div className="bg-white rounded-3xl border border-rose-200 p-8 shadow-xl text-center space-y-4 animate-in fade-in duration-200">
-              <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-300 flex items-center justify-center mx-auto text-2xl text-rose-600 shadow-sm">
-                <i className="fa-solid fa-server"></i>
-              </div>
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-900 text-xs font-bold font-mono">
-                  VISION SERVICE NOT CONFIGURED
-                </span>
-                <h3 className="font-serif font-bold text-lg text-slate-900 mt-2">
-                  Gemini Vision Disabled
-                </h3>
-                <p className="text-xs text-slate-600 mt-1 max-w-sm mx-auto leading-relaxed">
-                  Optical vision OCR requires the <code className="px-1 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-900">GEMINI_API_KEY</code> environment variable on the server.
-                </p>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-left text-xs text-amber-900 space-y-1">
-                <div className="font-bold flex items-center gap-1.5">
-                  <i className="fa-solid fa-lightbulb text-amber-600"></i>
-                  <span>Available Workarounds:</span>
+            <div className="bg-white rounded-3xl border border-amber-200 p-6 shadow-xl space-y-4 animate-in fade-in duration-200">
+              <div className="flex items-center gap-3 pb-3 border-b border-amber-100">
+                <div className="w-10 h-10 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-lg text-amber-700 shrink-0">
+                  <i className="fa-solid fa-server"></i>
                 </div>
-                <div className="text-[11px] leading-relaxed text-amber-800">
-                  • Enter an ISBN barcode manually using the input bar below.<br />
-                  • Configure your Gemini API key in the server <code className="font-mono">.env</code> file.
+                <div className="text-left">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold font-mono">
+                    VISION SERVICE NOT CONFIGURED
+                  </span>
+                  <h3 className="font-serif font-bold text-base text-slate-900 mt-0.5">
+                    Gemini Vision Disabled
+                  </h3>
                 </div>
               </div>
 
-              <div className="pt-2">
+              <p className="text-xs text-slate-600 leading-relaxed text-left">
+                Optical vision OCR requires the <code className="px-1 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-900">GEMINI_API_KEY</code> environment variable on the server. Camera barcode scanning, manual ISBN lookup, and catalog matching are fully operational.
+              </p>
+
+              {/* Instant Search Bar Inside Fallback Card */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-left">
+                <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                  <i className="fa-solid fa-magnifying-glass text-amber-600"></i>
+                  <span>Find by ISBN or Book Title:</span>
+                </label>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (manualQuery.trim()) executeSearch(manualQuery);
+                  }}
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={manualQuery}
+                    onChange={(e) => setManualQuery(e.target.value)}
+                    placeholder="e.g. 9780132350884 or Clean Code"
+                    className="flex-1 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:border-amber-500 font-mono"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-colors shrink-0 flex items-center gap-1.5"
+                  >
+                    <span>Search</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* One-Click Demo Sample Chips */}
+              <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-1.5 text-left">
+                <div className="text-[11px] font-bold text-amber-950 flex items-center justify-between">
+                  <span>Quick Test Samples:</span>
+                  <span className="text-[10px] text-amber-700 font-normal">1-Click Match</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {displaySamples.slice(0, 3).map(sample => (
+                    <button
+                      key={sample.id}
+                      type="button"
+                      onClick={() => handleSelectDemoSample(sample)}
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 border border-amber-200 text-amber-900 text-[11px] font-medium flex items-center gap-1.5 transition-colors shadow-2xs"
+                    >
+                      <i className="fa-solid fa-book-open text-[10px] text-amber-600"></i>
+                      <span className="truncate max-w-[130px]">{sample.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex flex-col sm:flex-row gap-2">
                 <button
+                  type="button"
+                  onClick={startCamera}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <i className="fa-solid fa-barcode text-xs"></i>
+                  <span>Scan Back Barcode</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handleResetScanner}
-                  className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-colors"
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors"
                 >
                   Return to Manual Search
                 </button>
